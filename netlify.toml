@@ -1,0 +1,20 @@
+# Deploy do modo online (sala com codigo, mestre como servidor no navegador).
+# O build LAN (npm run build / npm start) continua igual.
+[build]
+  base = "client"
+  command = "npm run build:online"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+# SPA: /sala/CODIGO, /player etc. caem no index.html.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"

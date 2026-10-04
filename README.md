@@ -112,6 +112,37 @@ As playlists da campanha funcionam sem configuração: basta colar links de víd
 
 O login só funciona a partir de `localhost`, porque o Google recusa redirect HTTP em outros hosts. Isso não atrapalha o uso, já que a música toca no navegador do mestre. O player embutido não herda o YouTube Premium, e faixas com reprodução externa bloqueada são puladas.
 
+## Modo online (Netlify)
+
+Além do modo LAN, o EVA S pode rodar como site estático, sem servidor: **o navegador do mestre vira o servidor**. O mesmo código de `server/src` (rotas e services) roda dentro da aba do mestre, com o SQLite em WebAssembly (sql.js) salvo no IndexedDB, e os jogadores conectam direto no navegador do mestre por WebRTC (PeerJS).
+
+Ao abrir o site aparece o lobby, com duas opções:
+
+- **Criar sala (mestre):** gera um código de 6 caracteres e abre as campanhas salvas neste navegador. O convite (código, link `/sala/CODIGO` e QR) fica na etiqueta da sala, no rodapé, e em **Configurações › Acesso**. Ao reabrir, o lobby oferece "Abrir minha sala" com o mesmo código, então os links antigos continuam valendo.
+- **Entrar numa sala (jogador):** pelo código ou abrindo o link de convite, que cai direto no login do jogador.
+
+Detalhes que importam:
+
+- **A mesa vive na aba do mestre.** Se ela fechar, os jogadores ficam esperando e reconectam sozinhos quando o mestre reabrir a sala. Um F5 do mestre não perde nada.
+- **Os dados ficam só naquele navegador.** O lobby e a etiqueta da sala têm **Exportar backup** (`.db`, o mesmo formato SQLite do servidor) e **Importar backup**. Exporte de vez em quando: limpar os dados do site apaga as campanhas.
+- **Migrar do modo LAN:** pare o servidor local (para o SQLite consolidar o WAL), importe `server/data/rpg-manager.db` no lobby e, quando ele pedir, selecione a pasta `server/data/uploads` para trazer os avatares. As imagens são reduzidas e embutidas no banco.
+- **Imagens** enviadas no modo online são reduzidas (até 512 px) e salvas no próprio banco, porque não existe pasta de uploads.
+- **Só o mestre vira mestre:** pedidos vindos de jogadores nunca carregam token de mestre, e criar/abrir campanha só funciona na aba que abriu a sala.
+- **Conexão:** o servidor público do PeerJS (`0.peerjs.com`) só apresenta os navegadores; os dados vão direto entre eles, com os servidores TURN padrão do PeerJS como reserva. Para usar um servidor PeerJS ou TURN próprio, defina `VITE_PEER_HOST`, `VITE_PEER_PORT`, `VITE_PEER_PATH`, `VITE_PEER_SECURE` e `VITE_ICE_SERVERS` (JSON) no build.
+- **YouTube:** funciona igual, com o redirect `https://SEU-SITE/api/music/youtube/callback` cadastrado no Google Cloud.
+
+### Deploy
+
+O `netlify.toml` na raiz já está configurado (base `client`, comando `npm run build:online`, publica `client/dist` e redireciona todas as rotas para o `index.html`). Basta conectar o repositório no Netlify.
+
+Para testar localmente:
+
+```bash
+cd client
+npm run dev:online      # Vite em modo online, sem precisar do servidor Node
+npm run build:online    # build estático do modo online em client/dist
+```
+
 ## Estrutura
 
 ```
@@ -120,6 +151,7 @@ O login só funciona a partir de `localhost`, porque o Google recusa redirect HT
 │       ├── components/     # campanhas, fichas, combate, mapa, música, configurações
 │       ├── contexts/       # estado global
 │       ├── pages/          # telas do mestre e do jogador
+│       ├── online/         # modo online: lobby, sala P2P, shims do servidor no navegador
 │       ├── services/       # cliente REST e Socket.IO
 │       └── types/
 ├── server/                 # Backend Node.js
