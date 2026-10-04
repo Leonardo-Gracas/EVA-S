@@ -1,0 +1,299 @@
+/* =====================================================
+   RPG Manager — Design System
+   Tema escuro inspirado em Notion/Discord/Obsidian
+   ===================================================== */
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  /* Cores base */
+  --bg-base: #0f1117;
+  --bg-surface: #161b27;
+  --bg-elevated: #1e2536;
+  --bg-overlay: #252d3d;
+  --bg-hover: #2a3347;
+
+  /* Bordas */
+  --border: #2d3748;
+  --border-light: #374151;
+
+  /* Texto */
+  --text-primary: #e2e8f0;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+  --text-disabled: #475569;
+
+  /* Cores de acento */
+  --accent: #6366f1;
+  --accent-hover: #7c3aed;
+  --accent-dim: rgba(99, 102, 241, 0.15);
+
+  /* Status */
+  --success: #22c55e;
+  --warning: #f59e0b;
+  --error: #ef4444;
+  --info: #3b82f6;
+
+  /* Recursos */
+  --health: #ef4444;
+  --sanity: #3b82f6;
+  --exposure: #a855f7;
+
+  /* Atributos */
+  --attr-good: #22c55e;
+  --attr-normal: #6b7280;
+  --attr-bad: #ef4444;
+
+  /* Raios */
+  --radius-sm: 6px;
+  --radius: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+
+  /* Sombras */
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.4);
+  --shadow: 0 4px 12px rgba(0,0,0,0.5);
+  --shadow-lg: 0 8px 24px rgba(0,0,0,0.6);
+
+  /* Sidebar */
+  --sidebar-width: 240px;
+
+  /* Transições */
+  --transition: 150ms ease;
+  --transition-slow: 300ms ease;
+}
+
+html, body, #root {
+  height: 100%;
+  width: 100%;
+}
+
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background-color: var(--bg-base);
+  color: var(--text-primary);
+  font-size: 14px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+a { color: inherit; text-decoration: none; }
+
+button {
+  cursor: pointer;
+  font-family: inherit;
+  border: none;
+  background: none;
+}
+
+input, textarea, select {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  outline: none;
+}
+
+/* Scrollbar personalizada */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--border-light); }
+
+/* Animações */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slideIn {
+  from { opacity: 0; transform: translateX(-8px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.animate-fadeIn { animation: fadeIn var(--transition-slow) forwards; }
+.animate-spin { animation: spin 1s linear infinite; }
+.animate-pulse { animation: pulse 2s ease infinite; }
+
+/* =====================================================
+   PlayerView — Layout Responsivo
+   ===================================================== */
+.pv-shell {
+  min-height: 100vh;
+  background: var(--bg-base);
+  display: flex;
+  flex-direction: column;
+}
+
+.pv-body {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 360px 1fr;
+  gap: 0;
+  max-width: 1200px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 16px;
+  gap: 16px;
+  align-items: start;
+}
+
+.pv-left {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.pv-right {
+  position: sticky;
+  top: 16px;
+  max-height: calc(100vh - 80px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.pv-tab-bar {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  background: var(--bg-surface);
+  z-index: 1;
+}
+
+.pv-tab-btn {
+  flex: 1;
+  padding: 12px 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: none;
+  border: none;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: all 0.15s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.pv-tab-btn:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.pv-tab-btn.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  background: var(--accent-dim);
+}
+
+.pv-tab-count {
+  font-size: 10px;
+  font-weight: 700;
+  min-width: 16px;
+  height: 16px;
+  border-radius: 100px;
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 4px;
+}
+
+.pv-tab-btn.active .pv-tab-count {
+  background: var(--accent);
+  color: #fff;
+}
+
+.pv-tab-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+}
+
+.pv-prot-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.pv-prot-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 8px 4px;
+  background: var(--bg-elevated);
+  border-radius: 8px;
+}
+
+@media (max-width: 780px) {
+  .pv-body {
+    grid-template-columns: 1fr;
+    padding: 12px;
+    gap: 12px;
+  }
+
+  .pv-right {
+    position: static;
+    max-height: none;
+    overflow: visible;
+  }
+
+  .pv-tab-bar {
+    position: static;
+  }
+}
+
+/* ── Combat Rail (PlayerView) ─────────────────────────────── */
+
+/* Desktop: panel always visible, toggle tab hidden */
+@media (min-width: 781px) {
+  .combat-rail-toggle { display: none !important; }
+  .combat-panel-body  { display: flex !important; }
+}
+
+/* Mobile: toggle tab shown, panel hidden by default */
+@media (max-width: 780px) {
+  .combat-rail-toggle {
+    display: flex !important;
+  }
+  .combat-panel-body {
+    display: none;
+    position: absolute;
+    right: 28px; /* offset past the tab */
+    top: 0;
+    bottom: 0;
+    max-height: 85vh;
+    overflow: hidden;
+  }
+  .combat-panel-body.open {
+    display: flex;
+  }
+}

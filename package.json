@@ -1,0 +1,16 @@
+{
+  "name": "rpg-manager",
+  "version": "1.0.0",
+  "description": "Sistema de Gerenciamento de RPG para Mestre",
+  "private": true,
+  "scripts": {
+    "install:all": "npm install && cd server && npm install && cd ../client && npm install",
+    "dev": "npm run build && concurrently \"cd server && npm run dev\" \"cd client && npm run dev\"",
+    "build": "cd client && npm run build",
+    "start": "cd server && npm start",
+    "firewall": "cd server && npm run firewall"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
