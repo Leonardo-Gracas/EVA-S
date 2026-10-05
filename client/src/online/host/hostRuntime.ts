@@ -165,13 +165,43 @@ async function handleLocal(method: string, path: string, body: unknown, headers:
   return { status: r.status, body: r.body };
 }
 
-async function handleRemote(method: string, path: string, body: unknown): Promise<ApiResult> {
+const PLAYER_TOKEN_RE = /^[0-9a-f]{64}$/;
+const REMOTE_METHODS = new Set(['GET', 'POST', 'PUT', 'DELETE']);
+
+async function handleRemote(method: string, path: string, body: unknown, playerToken: unknown, peerId: string): Promise<ApiResult> {
+  if (!REMOTE_METHODS.has(method) || !path.startsWith('/')) return { status: 400, body: { error: 'Pedido invalido' } };
   const p = path.split('?')[0];
   if (HOST_ONLY.some(([m, re]) => (m === '*' || m === method) && re.test(p))) {
     return { status: 403, body: { error: 'Apenas o mestre pode fazer isso.' } };
   }
-  // Sem headers do jogador: nada de x-gm-token vindo de fora.
-  return handleLocal(method, path, body, {});
+  // Do jogador so passa o token de sessao de jogador — nunca x-gm-token.
+  const headers: Record<string, string> = { 'x-evas-peer': peerId };
+  if (typeof playerToken === 'string' && PLAYER_TOKEN_RE.test(playerToken)) headers['x-player-token'] = playerToken;
+  return handleLocal(method, path, body, headers);
+}
+
+// Limites por conexao: um jogador (ou alguem que adivinhou o codigo) nao pode
+// travar a aba do mestre nem encher o banco com pedidos gigantes ou em rajada.
+const MAX_MESSAGE_CHARS = 3_000_000;
+const RATE_PER_SEC = 15;
+const RATE_BURST = 60;
+const ALLOWED_PEER_EVENTS = new Set(['player:join', 'player:leave']);
+
+function rateLimiter() {
+  let tokens = RATE_BURST;
+  let last = Date.now();
+  return () => {
+    const now = Date.now();
+    tokens = Math.min(RATE_BURST, tokens + ((now - last) / 1000) * RATE_PER_SEC);
+    last = now;
+    if (tokens < 1) return false;
+    tokens -= 1;
+    return true;
+  };
+}
+
+function messageSize(msg: unknown): number {
+  try { return JSON.stringify(msg)?.length ?? 0; } catch { return Infinity; }
 }
 
 // ── Sala P2P ──────────────────────────────────────────────────────────────────
@@ -189,15 +219,22 @@ function attachConnection(conn: DataConnection) {
     io?.connectPeer(socketId, send);
   });
 
+  const allow = rateLimiter();
+
   conn.on('data', async (raw: unknown) => {
     const msg = raw as any;
-    if (!msg || typeof msg !== 'object') return;
+    if (!msg || typeof msg !== 'object' || Array.isArray(msg)) return;
     if (msg.t === 'req') {
-      const res = await handleRemote(String(msg.method), String(msg.path), msg.body).catch((err: any) => ({
+      const id = Number(msg.id);
+      if (!Number.isSafeInteger(id)) return;
+      if (!allow()) { send({ t: 'res', id, status: 429, body: { error: 'Muitos pedidos. Espere um pouco.' } }); return; }
+      if (messageSize(msg) > MAX_MESSAGE_CHARS) { send({ t: 'res', id, status: 413, body: { error: 'Pedido grande demais.' } }); return; }
+      const res = await handleRemote(String(msg.method).toUpperCase(), String(msg.path), msg.body, msg.token, conn.peer).catch((err: any) => ({
         status: 500, body: { error: err?.message ?? 'Erro interno' },
       }));
-      send({ t: 'res', id: msg.id, status: res.status, body: res.body });
+      send({ t: 'res', id, status: res.status, body: res.body });
     } else if (msg.t === 'emit') {
+      if (!allow() || !ALLOWED_PEER_EVENTS.has(String(msg.event)) || messageSize(msg) > 10_000) return;
       io?.sockets.get(socketId)?.receive(String(msg.event), msg.data);
     } else if (msg.t === 'ping') {
       send({ t: 'pong' });

@@ -9,9 +9,8 @@ import { normalizeCode, isValidCode } from './config';
 import { installFetchShim } from './fetchShim';
 import { startHost, stopHost } from './host/hostRuntime';
 import { startGuest, stopGuest, guestEvents, guestState, GuestState } from './guestRuntime';
-import { getGmToken } from '../services/api';
+import { getGmToken, clearPlayerSession } from '../services/api';
 
-const PLAYER_SESSION_KEY = 'rpg_player_session';
 
 /** Le /sala/CODIGO (link de convite) ou a sala desta aba. */
 function initialRoom(): { room: RoomSession | null; error?: string } {
@@ -30,7 +29,7 @@ function initialRoom(): { room: RoomSession | null; error?: string } {
 function enterAsPlayer(code: string): RoomSession {
   // Login de jogador e por sala: o id salvo de outra mesa nao existe nesta.
   if (lastJoinCode() !== code) {
-    try { localStorage.removeItem(PLAYER_SESSION_KEY); } catch { /* ok */ }
+    try { clearPlayerSession(); } catch { /* ok */ }
   }
   const room: RoomSession = { role: 'player', code };
   setRoom(room);
@@ -52,7 +51,7 @@ export default function OnlineGate({ children }: { children: React.ReactNode }) 
     if (room?.role === 'host') await stopHost();
     else {
       stopGuest();
-      try { localStorage.removeItem(PLAYER_SESSION_KEY); } catch { /* ok */ }
+      try { clearPlayerSession(); } catch { /* ok */ }
     }
     clearRoom();
     // Recarrega do zero: os modulos do servidor/P2P ficam limpos.

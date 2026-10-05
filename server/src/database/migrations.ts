@@ -418,6 +418,16 @@ export function runMigrations(): void {
     );
   `);
 
+  // Sessoes de jogador (token emitido no login). Fora do snapshot de campanha.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS player_sessions (
+      token TEXT PRIMARY KEY,
+      player_id TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_player_sessions_player ON player_sessions(player_id);
+  `);
+
   console.log('Migrations executadas com sucesso');
 }
 // NOTE: this line intentionally left blank

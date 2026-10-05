@@ -16,6 +16,7 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import { useApp } from '../contexts/AppContext';
 import { api } from '../services/api';
+import { openImageSafely } from '../utils/safeImage';
 import {
   Character, Skill, CreateSkillDTO, SkillTemplate,
   ATTRIBUTE_RATING_COLORS, ATTRIBUTE_RATING_LABELS,
@@ -713,7 +714,7 @@ export default function CharacterSheet() {
                     <button
                       style={styles.imgBtn}
                       title="Ver imagem completa"
-                      onClick={() => window.open(character.avatar!, '_blank')}
+                      onClick={() => openImageSafely(character.avatar!)}
                     >
                       <ExternalLink size={14} />
                     </button>

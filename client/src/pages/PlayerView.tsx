@@ -8,7 +8,7 @@ import {
 import { useApp } from '../contexts/AppContext';
 import { getSocket } from '../services/socket';
 import CombatMap from './CombatMap';
-import { api } from '../services/api';
+import { api, getPlayerToken, savePlayerSession, clearPlayerSession } from '../services/api';
 import {
   Player, Character, Skill, CreateSkillDTO, CharacterRequest, CharacterItem,
   ATTRIBUTE_RATING_COLORS, ATTRIBUTE_RATING_LABELS,
@@ -307,7 +307,8 @@ export default function PlayerView() {
 
   const [player, setPlayer] = useState<Player | null>(() => {
     const saved = localStorage.getItem('rpg_player_session');
-    if (!saved) return null;
+    // Sessao de antes do token de jogador existir: pede login de novo.
+    if (!saved || !getPlayerToken()) return null;
     try { return JSON.parse(saved) as Player; } catch { return null; }
   });
   const [connected, setConnected] = useState(false);
@@ -401,7 +402,7 @@ export default function PlayerView() {
       if (req.playerId === player.id) setReviewNotifs(prev => [...prev, req]);
     };
     // Marca o jogador como online no painel do mestre (e de novo a cada reconexao).
-    const join = () => socket.emit('player:join', { playerId: player.id });
+    const join = () => socket.emit('player:join', { token: getPlayerToken() });
     socket.on('connect', onConnect);
     socket.on('connect', join);
     socket.on('disconnect', onDisconnect);
@@ -421,11 +422,11 @@ export default function PlayerView() {
   }, [player]);
 
   const handleLogin = (p: Player) => {
-    localStorage.setItem('rpg_player_session', JSON.stringify(p));
+    savePlayerSession(p as any);
     setPlayer(p);
   };
   const handleLogout = () => {
-    localStorage.removeItem('rpg_player_session');
+    clearPlayerSession();
     setPlayer(null);
   };
 

@@ -40,19 +40,48 @@ export function clearGmToken(): void {
   localStorage.removeItem(GM_TOKEN_KEY);
 }
 
+// Sessao do jogador: token emitido pelo servidor no login/cadastro do jogador.
+// As rotas de jogador conferem que o personagem e do dono do token.
+export const PLAYER_TOKEN_KEY = 'rpg_player_token';
+export const PLAYER_SESSION_KEY = 'rpg_player_session';
+
+export function getPlayerToken(): string | null {
+  try { return localStorage.getItem(PLAYER_TOKEN_KEY); } catch { return null; }
+}
+
+/** Guarda o jogador logado (sem o token dentro do objeto) e o token separado. */
+export function savePlayerSession(player: { sessionToken?: string } & Record<string, unknown>): void {
+  const { sessionToken, ...rest } = player;
+  localStorage.setItem(PLAYER_SESSION_KEY, JSON.stringify(rest));
+  if (sessionToken) localStorage.setItem(PLAYER_TOKEN_KEY, sessionToken);
+}
+
+export function clearPlayerSession(): void {
+  localStorage.removeItem(PLAYER_SESSION_KEY);
+  localStorage.removeItem(PLAYER_TOKEN_KEY);
+}
+
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const token = getGmToken();
+  const playerToken = getPlayerToken();
   const res = await fetch(`${BASE}${path}`, {
     method,
     headers: {
       'Content-Type': 'application/json',
       ...(token ? { 'x-gm-token': token } : {}),
+      ...(playerToken ? { 'x-player-token': playerToken } : {}),
     },
     body: body ? JSON.stringify(body) : undefined,
   });
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: 'Erro desconhecido' }));
+    // Sessao de jogador invalida (servidor reiniciou o banco, jogador removido...):
+    // volta pra tela de login do jogador em vez de falhar calado.
+    if (res.status === 401 && err.code === 'PLAYER_AUTH' && window.location.pathname.startsWith('/player')) {
+      clearPlayerSession();
+      window.location.reload();
+    }
     const error = new Error(err.error ?? `HTTP ${res.status}`);
     // Alguns fluxos (YouTube) precisam distinguir "erro" de "precisa relogar"
     // para trocar a UI em vez de so mostrar a mensagem.

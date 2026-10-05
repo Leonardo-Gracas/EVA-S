@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useTitle } from '../hooks/useTitle';
 import { User, Lock, Plus, ArrowLeft, Eye, EyeOff, Check, Hourglass } from 'lucide-react';
 import { Player } from '../types';
-import { api } from '../services/api';
+import { api, savePlayerSession } from '../services/api';
 import EvaLogo from '../components/layout/EvaLogo';
 
 interface PublicPlayer {
@@ -92,8 +92,9 @@ export default function PlayerLogin({ onLogin }: Props) {
         setPwError(body.error || 'Senha incorreta');
         return;
       }
-      const player: Player = await res.json();
-      localStorage.setItem('rpg_player_session', JSON.stringify(player));
+      const player: Player & { sessionToken?: string } = await res.json();
+      savePlayerSession(player as any);
+      delete player.sessionToken;
       onLogin(player);
     } catch {
       setPwError('Erro de conexao');
@@ -121,8 +122,9 @@ export default function PlayerLogin({ onLogin }: Props) {
         setRegErrors({ name: body.error || 'Erro ao criar jogador' });
         return;
       }
-      const player: Player = await res.json();
-      localStorage.setItem('rpg_player_session', JSON.stringify(player));
+      const player: Player & { sessionToken?: string } = await res.json();
+      savePlayerSession(player as any);
+      delete player.sessionToken;
       onLogin(player);
     } catch {
       setRegErrors({ name: 'Erro de conexao' });

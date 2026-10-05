@@ -23,9 +23,17 @@ import { requireGmAuth } from '../middleware/gmAuth';
 import { getHistory } from '../services/historyService';
 import { getAccessInfo } from '../network';
 import { getIO } from '../socket/socketManager';
+import { authorizeCharacter, requireGmOrPlayer, isGm, sessionPlayer, denyPlayerAuth } from '../middleware/access';
+import { createPlayerSession, deletePlayerSessions } from '../services/playerSessionService';
+import { assertAvatar, assertTextLength, isSafeColor, escapeHtml, omit } from '../utils/sanitize';
+import { PlayerActionKey } from '../types';
 
 const router = Router();
 
+// NOTE: o modelo abaixo foi endurecido — ver middleware/access.ts. Rotas de
+// jogador agora exigem sessao de jogador (x-player-token), conferem o dono do
+// personagem e aplicam as permissoes livre/solicitar/bloqueado no servidor.
+// Texto historico:
 // NOTE (permission model, documented not enforced by design):
 // `playerPermissions`/`globalPermissions` (free/request/blocked) are only
 // checked client-side (see PlayerView.tsx's getPermission()) to decide the
@@ -59,12 +67,39 @@ function emitCampaignSwitch() {
   emitUpdate('campaign:switched', {});
 }
 
+// ======================== LIMITE DE TENTATIVAS DE SENHA ========================
+// Sem isso dava pra testar senhas de jogador/campanha/admin sem parar.
+const attempts = new Map<string, { count: number; resetAt: number }>();
+const MAX_ATTEMPTS = 10;
+const WINDOW_MS = 5 * 60 * 1000;
+
+function attemptKey(req: Request, scope: string): string {
+  // LAN: IP de quem chamou. Online: id da conexao P2P (posto pelo host, nunca pelo jogador).
+  return `${scope}:${(req as any).ip ?? req.header('x-evas-peer') ?? 'local'}`;
+}
+function tooManyAttempts(req: Request, res: Response, scope: string): boolean {
+  const entry = attempts.get(attemptKey(req, scope));
+  if (entry && entry.resetAt > Date.now() && entry.count >= MAX_ATTEMPTS) {
+    res.status(429).json({ error: 'Muitas tentativas. Espere alguns minutos.' });
+    return true;
+  }
+  return false;
+}
+function recordFailure(req: Request, scope: string): void {
+  const key = attemptKey(req, scope);
+  const now = Date.now();
+  const entry = attempts.get(key);
+  if (!entry || entry.resetAt <= now) attempts.set(key, { count: 1, resetAt: now + WINDOW_MS });
+  else entry.count += 1;
+}
+
 // ======================== MESTRE AUTH ========================
 
 router.post('/admin/verify', (req: Request, res: Response) => {
   const { password } = req.body;
   if (!password) return res.status(400).json({ error: 'Senha obrigatoria' });
-  if (!verifyAdminPassword(password)) return res.status(401).json({ error: 'Senha incorreta' });
+  if (tooManyAttempts(req, res, 'admin')) return;
+  if (!verifyAdminPassword(String(password))) { recordFailure(req, 'admin'); return res.status(401).json({ error: 'Senha incorreta' }); }
   res.json({ success: true });
 });
 
@@ -215,7 +250,8 @@ router.get('/campaigns', (_req: Request, res: Response) => {
 router.post('/campaigns', (req: Request, res: Response) => {
   try {
     const { adminPassword, ...dto } = req.body;
-    if (!verifyAdminPassword(adminPassword)) return res.status(401).json({ error: 'Senha admin incorreta' });
+    if (tooManyAttempts(req, res, 'admin')) return;
+    if (!verifyAdminPassword(String(adminPassword ?? ''))) { recordFailure(req, 'admin'); return res.status(401).json({ error: 'Senha admin incorreta' }); }
     const campaigns = multiCampaignService.createNewCampaign(dto);
     openGmSession();
     emitCampaignSwitch();
@@ -232,7 +268,14 @@ router.post('/campaigns', (req: Request, res: Response) => {
 router.post('/campaigns/:id/switch', (req: Request, res: Response) => {
   try {
     const { password = '' } = req.body;
-    const result = multiCampaignService.authenticateCampaign(req.params.id, password);
+    if (tooManyAttempts(req, res, 'campaign')) return;
+    let result;
+    try {
+      result = multiCampaignService.authenticateCampaign(req.params.id, String(password));
+    } catch (err) {
+      recordFailure(req, 'campaign');
+      throw err;
+    }
     openGmSession();
     emitCampaignSwitch();
     res.json({ ...result, gmToken: createGmToken() });
@@ -349,6 +392,7 @@ router.post('/grimorio-spells/:spellId/cast', (req, res) => {
   try {
     const { characterId } = req.body;
     if (!characterId) return res.status(400).json({ error: 'characterId obrigatório' });
+    if (!authorizeCharacter(req, res, String(characterId), ['spell_cast'])) return;
     const character = grimorioService.castSpell(req.params.spellId, characterId);
     emitUpdate('character:updated', character);
     res.json({ character, spellUses: grimorioService.getSpellUsesForCharacter(characterId) });
@@ -371,9 +415,10 @@ router.post('/players/login', (req: Request, res: Response) => {
   if (!isGmSessionOpen()) return res.status(423).json({ error: 'O mestre ainda nao selecionou a campanha', locked: true });
   const { playerId, password = '' } = req.body;
   if (!playerId) return res.status(400).json({ error: 'playerId obrigatorio' });
-  const player = playerService.validatePlayerLogin(playerId, password);
-  if (!player) return res.status(401).json({ error: 'Senha incorreta' });
-  res.json(player);
+  if (tooManyAttempts(req, res, 'player')) return;
+  const player = playerService.validatePlayerLogin(String(playerId), String(password));
+  if (!player) { recordFailure(req, 'player'); return res.status(401).json({ error: 'Senha incorreta' }); }
+  res.json({ ...player, sessionToken: createPlayerSession(player.id) });
 });
 
 router.get('/players', (_req: Request, res: Response) => {
@@ -389,10 +434,24 @@ router.get('/players/:id', (req: Request, res: Response) => {
 router.post('/players', (req: Request, res: Response) => {
   if (!isGmSessionOpen()) return res.status(423).json({ error: 'O mestre ainda nao selecionou a campanha', locked: true });
   try {
-    const player = playerService.createPlayer(req.body);
+    const gm = isGm(req);
+    const body = req.body ?? {};
+    const name = String(body.name ?? '').trim();
+    if (!name) return res.status(400).json({ error: 'Nome obrigatorio' });
+    assertTextLength(name, 60, 'Nome');
+    assertTextLength(body.password, 200, 'Senha');
+    // Auto-cadastro do jogador nunca escolhe o proprio papel nem o personagem.
+    const dto = {
+      ...body,
+      name,
+      color: isSafeColor(body.color) ? body.color : '#6366f1',
+      permission: gm && body.permission === 'gm' ? 'gm' : 'player',
+      characterId: gm ? body.characterId : null,
+    };
+    const player = playerService.createPlayer(dto);
     emitUpdate('player:updated', player);
     emitUpdate('players:online', playerService.getAllPlayers());
-    res.status(201).json(player);
+    res.status(201).json(gm ? player : { ...player, sessionToken: createPlayerSession(player.id) });
   } catch (err: any) {
     res.status(400).json({ error: err.message });
   }
@@ -400,6 +459,8 @@ router.post('/players', (req: Request, res: Response) => {
 
 router.put('/players/:id', requireGmAuth, (req: Request, res: Response) => {
   try {
+    if (req.body?.color !== undefined && !isSafeColor(req.body.color)) return res.status(400).json({ error: 'Cor invalida' });
+    assertTextLength(req.body?.name, 60, 'Nome');
     const player = playerService.updatePlayer(req.params.id, req.body);
     if (!player) return res.status(404).json({ error: 'Jogador nao encontrado' });
     emitUpdate('player:updated', player);
@@ -426,6 +487,7 @@ router.delete('/players/:id', requireGmAuth, (req: Request, res: Response) => {
   try {
     const deleted = playerService.deletePlayer(req.params.id);
     if (!deleted) return res.status(404).json({ error: 'Jogador nao encontrado' });
+    deletePlayerSessions(req.params.id);
     emitUpdate('player:removed', { id: req.params.id });
     emitUpdate('players:online', playerService.getAllPlayers());
     res.json({ success: true });
@@ -446,9 +508,43 @@ router.get('/characters/:id', (req: Request, res: Response) => {
   res.json(character);
 });
 
+// Campos da ficha que so o mestre altera (dono, tipo, permissoes, deslocamento).
+const GM_ONLY_CHARACTER_FIELDS = ['playerId', 'type', 'playerPermissions', 'displacement'];
+// O que conta como "alterar recursos" (permissao resource_change); o resto e character_update.
+const RESOURCE_FIELDS = ['currentResources', 'conditions', 'inspiration'];
+
+function validateCharacterInput(body: any): void {
+  assertAvatar(body?.avatar);
+  assertTextLength(body?.name, 100, 'Nome');
+  assertTextLength(body?.description, 20000, 'Descricao');
+}
+
+/** Quais campos do dto realmente mudam em relacao a ficha atual. */
+function changedCharacterFields(current: any, dto: any): string[] {
+  const norm = (v: any) => JSON.stringify(v ?? null);
+  const stripIds = (list: any[]) => (Array.isArray(list) ? list.map(({ id, ...rest }: any) => rest) : list);
+  return Object.keys(dto).filter((k) => {
+    const next = dto[k];
+    const cur = current[k];
+    if (next && typeof next === 'object' && !Array.isArray(next) && cur && typeof cur === 'object' && !Array.isArray(cur)) {
+      return Object.keys(next).some((sub) => norm(next[sub]) !== norm(cur[sub]));
+    }
+    if (k === 'attributes') return norm(stripIds(next)) !== norm(stripIds(cur));
+    return norm(next) !== norm(cur);
+  });
+}
+
 router.post('/characters', (req: Request, res: Response) => {
   try {
-    const character = characterService.createCharacter(req.body);
+    validateCharacterInput(req.body);
+    let dto = req.body;
+    if (!isGm(req)) {
+      const player = sessionPlayer(req);
+      if (!player) return denyPlayerAuth(res);
+      // Jogador so cria personagem jogador para si mesmo.
+      dto = { ...omit(req.body ?? {}, GM_ONLY_CHARACTER_FIELDS), type: 'pc', playerId: player.id };
+    }
+    const character = characterService.createCharacter(dto);
     emitUpdate('character:updated', character);
     res.status(201).json(character);
   } catch (err: any) {
@@ -458,7 +554,21 @@ router.post('/characters', (req: Request, res: Response) => {
 
 router.put('/characters/:id', (req: Request, res: Response) => {
   try {
-    const character = characterService.updateCharacter(req.params.id, req.body);
+    validateCharacterInput(req.body);
+    let dto = req.body ?? {};
+    if (!isGm(req)) {
+      const owner = authorizeCharacter(req, res, req.params.id);
+      if (!owner) return;
+      dto = omit(dto, GM_ONLY_CHARACTER_FIELDS);
+      const changed = changedCharacterFields(owner.character, dto);
+      const actions: PlayerActionKey[] = [];
+      if (changed.some((k) => RESOURCE_FIELDS.includes(k))) actions.push('resource_change');
+      if (changed.some((k) => !RESOURCE_FIELDS.includes(k))) actions.push('character_update');
+      if (!authorizeCharacter(req, res, req.params.id, actions)) return;
+      dto = Object.fromEntries(changed.map((k) => [k, dto[k]]));
+    }
+    req.body = dto;
+    const character = characterService.updateCharacter(req.params.id, dto);
     if (!character) return res.status(404).json({ error: 'Personagem nao encontrado' });
     emitUpdate('character:updated', character);
     if (req.body.currentResources) {
@@ -484,8 +594,20 @@ router.delete('/characters/:id', requireGmAuth, (req: Request, res: Response) =>
 
 // ======================== HABILIDADES ========================
 
+// Habilidade/item precisam ser do personagem da URL — senao dava pra mexer
+// na habilidade de outro personagem passando o proprio charId.
+function skillOf(charId: string, skillId: string) {
+  const skill = characterService.getSkillById(skillId);
+  return skill && skill.characterId === charId ? skill : null;
+}
+function itemOf(charId: string, itemId: string) {
+  const item = characterItemService.getCharacterItemById(itemId);
+  return item && item.characterId === charId ? item : null;
+}
+
 router.post('/characters/:charId/skills', (req: Request, res: Response) => {
   try {
+    if (!authorizeCharacter(req, res, req.params.charId, ['skill_create'])) return;
     const skill = characterService.createSkill(req.params.charId, req.body);
     const character = characterService.getCharacterById(req.params.charId);
     if (character) emitUpdate('character:updated', character);
@@ -497,6 +619,7 @@ router.post('/characters/:charId/skills', (req: Request, res: Response) => {
 
 router.put('/characters/:charId/skills/reorder', (req: Request, res: Response) => {
   try {
+    if (!authorizeCharacter(req, res, req.params.charId, ['skill_update'])) return;
     const skills = characterService.reorderSkills(req.params.charId, req.body.orderedIds);
     const character = characterService.getCharacterById(req.params.charId);
     if (character) emitUpdate('character:updated', character);
@@ -508,6 +631,8 @@ router.put('/characters/:charId/skills/reorder', (req: Request, res: Response) =
 
 router.put('/characters/:charId/skills/:skillId', (req: Request, res: Response) => {
   try {
+    if (!authorizeCharacter(req, res, req.params.charId, ['skill_update'])) return;
+    if (!skillOf(req.params.charId, req.params.skillId)) return res.status(404).json({ error: 'Habilidade nao encontrada' });
     const skill = characterService.updateSkill(req.params.skillId, req.body);
     if (!skill) return res.status(404).json({ error: 'Habilidade nao encontrada' });
     const character = characterService.getCharacterById(req.params.charId);
@@ -520,6 +645,8 @@ router.put('/characters/:charId/skills/:skillId', (req: Request, res: Response) 
 
 router.delete('/characters/:charId/skills/:skillId', (req: Request, res: Response) => {
   try {
+    if (!authorizeCharacter(req, res, req.params.charId, ['skill_delete'])) return;
+    if (!skillOf(req.params.charId, req.params.skillId)) return res.status(404).json({ error: 'Habilidade nao encontrada' });
     const deleted = characterService.deleteSkill(req.params.skillId);
     if (!deleted) return res.status(404).json({ error: 'Habilidade nao encontrada' });
     const character = characterService.getCharacterById(req.params.charId);
@@ -532,6 +659,8 @@ router.delete('/characters/:charId/skills/:skillId', (req: Request, res: Respons
 
 router.post('/characters/:charId/skills/:skillId/use', (req: Request, res: Response) => {
   try {
+    if (!authorizeCharacter(req, res, req.params.charId, ['skill_use'])) return;
+    if (!skillOf(req.params.charId, req.params.skillId)) return res.status(404).json({ error: 'Habilidade nao encontrada' });
     characterService.useSkill(req.params.skillId);
     const character = characterService.getCharacterById(req.params.charId);
     if (!character) return res.status(404).json({ error: 'Personagem nao encontrado' });
@@ -547,6 +676,8 @@ router.post('/characters/:charId/skills/:skillId/use', (req: Request, res: Respo
 // de uma solicitacao skill_trigger produz.
 router.post('/characters/:charId/skills/:skillId/trigger', (req: Request, res: Response) => {
   try {
+    if (!authorizeCharacter(req, res, req.params.charId, ['skill_use'])) return;
+    if (!skillOf(req.params.charId, req.params.skillId)) return res.status(404).json({ error: 'Habilidade nao encontrada' });
     const character = characterService.triggerSkill(req.params.charId, req.params.skillId);
     if (!character) return res.status(404).json({ error: 'Personagem nao encontrado' });
     emitUpdate('character:updated', character);
@@ -558,6 +689,7 @@ router.post('/characters/:charId/skills/:skillId/trigger', (req: Request, res: R
 
 router.post('/characters/:charId/rest', (req: Request, res: Response) => {
   try {
+    if (!authorizeCharacter(req, res, req.params.charId, ['rest'])) return;
     characterService.restCharacter(req.params.charId);
     grimorioService.restCharacterSpells(req.params.charId);
     const character = characterService.getCharacterById(req.params.charId);
@@ -628,9 +760,24 @@ router.get('/requests', (_req: Request, res: Response) => {
   res.json(characterRequestService.getAllRequests());
 });
 
+/** Pedido do jogador: o personagem tem que ser dele e o autor vem da sessao, nao do corpo. */
+function requestBody(req: Request, res: Response): any | null {
+  const body = req.body ?? {};
+  const owner = authorizeCharacter(req, res, String(body.characterId ?? ''));
+  if (!owner) return null;
+  try {
+    assertTextLength(body.description, 2000, 'Descricao');
+    if (JSON.stringify(body.payload ?? null).length > 2_000_000) throw new Error('Pedido grande demais.');
+  } catch (e: any) { res.status(400).json({ error: e.message }); return null; }
+  if (owner.gm) return body;
+  return { ...body, playerId: owner.player!.id, playerName: owner.player!.name };
+}
+
 router.post('/requests', (req: Request, res: Response) => {
   try {
-    const request = characterRequestService.createRequest(req.body);
+    const body = requestBody(req, res);
+    if (!body) return;
+    const request = characterRequestService.createRequest(body);
     const io = getIO();
     if (io) io.emit('request:new', request);
     res.status(201).json(request);
@@ -641,7 +788,9 @@ router.post('/requests', (req: Request, res: Response) => {
 
 router.post('/requests/free', (req: Request, res: Response) => {
   try {
-    const request = characterRequestService.createFreeRequest(req.body);
+    const body = requestBody(req, res);
+    if (!body) return;
+    const request = characterRequestService.createFreeRequest(body);
     const io = getIO();
     if (io) io.emit('request:new', request);
     res.status(201).json(request);
@@ -766,6 +915,7 @@ router.get('/characters/:charId/items', (req, res) => {
 
 router.post('/characters/:charId/items', (req, res) => {
   try {
+    if (!authorizeCharacter(req, res, req.params.charId, ['item_add'])) return;
     const item = characterItemService.addItemToCharacter(req.params.charId, req.body);
     const char = characterService.getCharacterById(req.params.charId);
     if (char) emitUpdate('character:updated', char);
@@ -775,6 +925,9 @@ router.post('/characters/:charId/items', (req, res) => {
 
 router.put('/characters/:charId/items/:itemId', (req, res) => {
   try {
+    const onlyEquip = Object.keys(req.body ?? {}).every((k) => k === 'equipped');
+    if (!authorizeCharacter(req, res, req.params.charId, [onlyEquip ? 'item_equip' : 'item_update'])) return;
+    if (!itemOf(req.params.charId, req.params.itemId)) return res.status(404).json({ error: 'Item nao encontrado' });
     const item = characterItemService.updateCharacterItem(req.params.itemId, req.body);
     if (!item) return res.status(404).json({ error: 'Item nao encontrado' });
     const char = characterService.getCharacterById(req.params.charId);
@@ -784,6 +937,8 @@ router.put('/characters/:charId/items/:itemId', (req, res) => {
 });
 
 router.delete('/characters/:charId/items/:itemId', (req, res) => {
+  if (!authorizeCharacter(req, res, req.params.charId, ['item_remove'])) return;
+  if (!itemOf(req.params.charId, req.params.itemId)) return res.status(404).json({ error: 'Item nao encontrado' });
   const ok = characterItemService.removeItemFromCharacter(req.params.itemId);
   if (!ok) return res.status(404).json({ error: 'Item nao encontrado' });
   const char = characterService.getCharacterById(req.params.charId);
@@ -794,6 +949,7 @@ router.delete('/characters/:charId/items/:itemId', (req, res) => {
 router.post('/characters/:charId/items/:itemId/use', (req, res) => {
   try {
     const { charId, itemId } = req.params;
+    if (!authorizeCharacter(req, res, charId, ['item_use'])) return;
     const qty = Math.max(1, Math.floor(Number(req.body?.quantity ?? 1)));
 
     const char = characterService.getCharacterById(charId);
@@ -997,7 +1153,23 @@ router.put('/combat/:id/participants/:uid/remaining-displacement', requireGmAuth
   res.json(session);
 });
 
+/** Jogador so move o proprio participante (o mestre move qualquer um). */
+function canMoveParticipant(req: Request, res: Response, combatId: string, participantUid: unknown): boolean {
+  if (isGm(req)) return true;
+  const player = sessionPlayer(req);
+  if (!player) { denyPlayerAuth(res); return false; }
+  const session = combatService.getSessionById(combatId);
+  const participant = session?.participants.find((p) => p.uid === participantUid);
+  const character = participant ? characterService.getCharacterById(participant.characterId) : null;
+  if (!character || character.playerId !== player.id) {
+    res.status(403).json({ error: 'Voce so pode mover o seu personagem.' });
+    return false;
+  }
+  return true;
+}
+
 router.post('/combat/:id/undo-move', (req, res) => {
+  if (!canMoveParticipant(req, res, req.params.id, req.body?.participantUid)) return;
   const session = combatService.undoMove(req.params.id, req.body.participantUid);
   if (!session) return res.status(400).json({ error: 'Sem movimento para desfazer' });
   emitUpdate('combat:updated', session);
@@ -1006,6 +1178,7 @@ router.post('/combat/:id/undo-move', (req, res) => {
 
 router.post('/combat/:id/move', (req, res) => {
   const { participantUid, pathId } = req.body;
+  if (!canMoveParticipant(req, res, req.params.id, participantUid)) return;
   const result = combatService.moveParticipant(req.params.id, participantUid, pathId);
   if (!result) return res.status(404).json({ error: 'Combate nao encontrado' });
   if (result.result === 'error') return res.status(400).json({ error: result.message });
@@ -1148,7 +1321,10 @@ router.post('/music/youtube/auth-url', requireGmAuth, (req, res) => {
 });
 
 router.get('/music/youtube/callback', async (req, res) => {
-  const finish = (ok: boolean, message: string) => {
+  const finish = (ok: boolean, rawMessage: string) => {
+    // A mensagem carrega texto vindo da URL (?error=) e de erro externo: escapar
+    // evita XSS refletido na origem do app (onde fica o token do mestre).
+    const message = escapeHtml(rawMessage);
     // Abre numa popup: avisa o opener e fecha sozinha.
     res.send(`<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>YouTube Music</title></head>
 <body style="font-family:system-ui,sans-serif;background:#0f1117;color:#e2e8f0;padding:40px;text-align:center">

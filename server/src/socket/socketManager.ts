@@ -1,6 +1,7 @@
 import { Server as SocketIOServer, Socket } from 'socket.io';
 import { Server as HTTPServer } from 'http';
 import * as playerService from '../services/playerService';
+import { getSessionPlayer } from '../services/playerSessionService';
 
 let io: SocketIOServer | null = null;
 
@@ -20,8 +21,12 @@ export function initSocket(httpServer: HTTPServer): SocketIOServer {
     console.log(`🔌 Cliente conectado: ${socket.id}`);
 
     // Jogador entra na sessão
-    socket.on('player:join', ({ playerId }: { playerId: string }) => {
-      const player = playerService.setPlayerOnline(playerId, socket.id);
+    // O jogador se identifica pelo token de sessao, nao pelo id — senao qualquer
+    // conexao podia se passar por outro jogador.
+    socket.on('player:join', (data: { token?: string } | undefined) => {
+      const session = getSessionPlayer(data?.token);
+      if (!session) return;
+      const player = playerService.setPlayerOnline(session.id, socket.id);
       if (player) {
         console.log(`👤 Jogador "${player.name}" entrou (${socket.id})`);
         io!.emit('player:updated', player);

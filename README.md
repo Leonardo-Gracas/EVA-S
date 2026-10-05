@@ -131,6 +131,19 @@ Detalhes que importam:
 - **Conexão:** o servidor público do PeerJS (`0.peerjs.com`) só apresenta os navegadores; os dados vão direto entre eles, com os servidores TURN padrão do PeerJS como reserva. Para usar um servidor PeerJS ou TURN próprio, defina `VITE_PEER_HOST`, `VITE_PEER_PORT`, `VITE_PEER_PATH`, `VITE_PEER_SECURE` e `VITE_ICE_SERVERS` (JSON) no build.
 - **YouTube:** funciona igual, com o redirect `https://SEU-SITE/api/music/youtube/callback` cadastrado no Google Cloud.
 
+### Segurança
+
+O app assume que qualquer pessoa com o link da sala pode tentar mexer onde não deve, então as regras valem no servidor (o mesmo código nos dois modos), não só na tela:
+
+- **Sessão de jogador:** login e cadastro de jogador emitem um token. Sem ele, nenhuma rota de jogador altera nada.
+- **Dono da ficha:** o jogador só altera o próprio personagem, e habilidades/itens precisam pertencer a esse personagem (inclusive em pedidos aprovados pelo mestre).
+- **Permissões:** livre/solicitar/bloqueado são conferidas no servidor. "Solicitar" só passa como pedido ao mestre.
+- **Campos do mestre:** dono, tipo, permissões e deslocamento da ficha só o mestre muda. Auto-cadastro sempre cria jogador comum.
+- **Entradas:** avatar só aceita imagem embutida ou arquivo de `/uploads`, cores só hexadecimal, textos com tamanho máximo.
+- **Senhas** com sal e iterações (hashes antigos são migrados no próximo login) e limite de tentativas.
+- **Modo online:** do jogador só chega o token de jogador (nunca o de mestre), com limite de pedidos por segundo e de tamanho por mensagem. O site publica CSP e outros cabeçalhos (`netlify.toml`).
+- **Senha admin:** o hash padrão está neste repositório público. No modo LAN dá pra trocar com a variável `ADMIN_PASSWORD_HASH` (SHA-256 da nova senha).
+
 ### Deploy
 
 O `netlify.toml` na raiz já está configurado (base `client`, comando `npm run build:online`, publica `client/dist` e redireciona todas as rotas para o `index.html`). Basta conectar o repositório no Netlify.

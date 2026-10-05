@@ -37,7 +37,7 @@ function failPending(message: string) {
   }
 }
 
-function request(method: string, path: string, body: unknown): Promise<ApiResult> {
+function request(method: string, path: string, body: unknown, token?: string): Promise<ApiResult> {
   if (!conn || !conn.open) return Promise.resolve({ status: 503, body: { error: 'Sem conexao com o mestre.' } });
   const id = ++seq;
   return new Promise((resolve) => {
@@ -46,7 +46,7 @@ function request(method: string, path: string, body: unknown): Promise<ApiResult
       resolve({ status: 504, body: { error: 'O mestre demorou para responder.' } });
     }, REQUEST_TIMEOUT);
     pending.set(id, { resolve, timer });
-    conn!.send({ t: 'req', id, method, path, body });
+    conn!.send({ t: 'req', id, method, path, body, token });
   });
 }
 
@@ -106,7 +106,7 @@ export function startGuest(code: string): void {
   if (peer && !peer.destroyed && hostCode === code) return; // StrictMode monta duas vezes
   stopped = false;
   hostCode = code;
-  setApiHandler((method, path, body) => request(method, path, body));
+  setApiHandler((method, path, body, headers) => request(method, path, body, headers['x-player-token']));
   setOutbound((event, data) => { if (conn?.open) conn.send({ t: 'emit', event, data }); });
 
   peer = new Peer(peerOptions());

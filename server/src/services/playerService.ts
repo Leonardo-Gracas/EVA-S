@@ -2,7 +2,7 @@ import db from '../database/db';
 import { Player, CreatePlayerDTO, UpdatePlayerDTO } from '../types';
 import { v4 as uuidv4 } from 'uuid';
 import { logHistory } from './historyService';
-import { hashPassword } from '../utils/password';
+import { hashPassword, verifyPassword, isLegacyHash } from '../utils/password';
 
 function rowToPlayer(row: any): Player {
   return {
@@ -39,7 +39,11 @@ export function validatePlayerLogin(playerId: string, password: string): Player 
   const stored = row.password_hash ?? '';
   if (stored === '' && password === '') return rowToPlayer(row);
   if (stored === '' && password !== '') return rowToPlayer(row);
-  if (hashPassword(password) !== stored) return null;
+  if (!verifyPassword(password, stored)) return null;
+  // Hash antigo (SHA-256 sem sal): troca pelo formato novo agora que a senha e conhecida.
+  if (isLegacyHash(stored)) {
+    db.prepare('UPDATE players SET password_hash = ? WHERE id = ?').run(hashPassword(password), playerId);
+  }
   return rowToPlayer(row);
 }
 

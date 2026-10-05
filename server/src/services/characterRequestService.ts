@@ -5,6 +5,7 @@ import * as characterService from './characterService';
 import * as characterItemService from './characterItemService';
 import * as grimorioService from './grimorioService';
 import { logHistory } from './historyService';
+import { isSafeImageUrl } from '../utils/sanitize';
 
 function rowToRequest(row: any): CharacterRequest {
   return {
@@ -91,8 +92,30 @@ export function reviewRequest(id: string, action: 'approved' | 'denied'): Charac
   return getRequestById(id);
 }
 
+// Pedido aprovado so pode mexer no proprio personagem do pedido: o payload
+// vem do jogador e o mestre ve so a descricao/diff, entao um skillId/itemId de
+// OUTRO personagem passaria batido.
+function assertOwnSkill(characterId: string, skillId: unknown): void {
+  const skill = characterService.getSkillById(String(skillId ?? ''));
+  if (!skill || skill.characterId !== characterId) throw new Error('Habilidade nao pertence ao personagem do pedido');
+}
+function assertOwnItem(characterId: string, itemId: unknown): void {
+  const item = characterItemService.getCharacterItemById(String(itemId ?? ''));
+  if (!item || item.characterId !== characterId) throw new Error('Item nao pertence ao personagem do pedido');
+}
+const GM_ONLY_FIELDS = ['playerId', 'type', 'playerPermissions', 'displacement'];
+
 function applyRequest(req: CharacterRequest): void {
-  const p = req.payload;
+  const p = req.payload ?? {};
+  if (['skill_update', 'skill_delete', 'skill_trigger', 'skill_charge'].includes(req.type)) assertOwnSkill(req.characterId, p.skillId);
+  if (['item_update', 'item_equip', 'item_remove', 'item_use'].includes(req.type)) assertOwnItem(req.characterId, p.itemId);
+  if (req.type === 'character_update' && p.character && typeof p.character === 'object') {
+    for (const k of GM_ONLY_FIELDS) delete p.character[k];
+    const avatar = p.character.avatar;
+    if (avatar !== undefined && avatar !== null && avatar !== '' && !isSafeImageUrl(avatar)) {
+      throw new Error('Imagem de avatar invalida');
+    }
+  }
   switch (req.type) {
     case 'resource_change': {
       characterService.updateCharacter(req.characterId, {
