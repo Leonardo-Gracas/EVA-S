@@ -17,3 +17,11 @@ export function createGmToken(): string {
 export function isValidGmToken(token: string | undefined | null): boolean {
   return !!token && validTokens.has(token);
 }
+
+// Modo online (navegador do mestre como servidor): o token fica no localStorage
+// do PROPRIO mestre e a "memoria do servidor" some a cada F5. Re-registrar o
+// token desse mesmo navegador evita pedir a senha da campanha a cada recarga.
+// Nunca e chamado com token vindo de jogador.
+export function registerGmToken(token: string | null | undefined): void {
+  if (token && /^[0-9a-f]{64}$/.test(token)) validTokens.add(token);
+}

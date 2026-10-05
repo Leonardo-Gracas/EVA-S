@@ -297,7 +297,7 @@ router.get('/grimorios/:id', (req, res) => {
 router.post('/grimorios', requireGmAuth, (req, res) => {
   try {
     const grimorio = grimorioService.createGrimorio(req.body);
-    emitUpdate('effectTemplates:updated', require('../services/effectTemplateService').getAllEffectTemplates());
+    emitUpdate('effectTemplates:updated', effectTemplateService.getAllEffectTemplates());
     emitUpdate('grimorios:updated', grimorioService.listGrimorios());
     res.json(grimorio);
   } catch (e: any) { res.status(400).json({ error: e.message }); }
@@ -306,7 +306,7 @@ router.post('/grimorios', requireGmAuth, (req, res) => {
 router.put('/grimorios/:id', requireGmAuth, (req, res) => {
   try {
     const grimorio = grimorioService.updateGrimorio(req.params.id, req.body);
-    emitUpdate('effectTemplates:updated', require('../services/effectTemplateService').getAllEffectTemplates());
+    emitUpdate('effectTemplates:updated', effectTemplateService.getAllEffectTemplates());
     emitUpdate('grimorios:updated', grimorioService.listGrimorios());
     res.json(grimorio);
   } catch (e: any) { res.status(400).json({ error: e.message }); }
@@ -315,7 +315,7 @@ router.put('/grimorios/:id', requireGmAuth, (req, res) => {
 router.delete('/grimorios/:id', requireGmAuth, (req, res) => {
   try {
     grimorioService.deleteGrimorio(req.params.id);
-    emitUpdate('effectTemplates:updated', require('../services/effectTemplateService').getAllEffectTemplates());
+    emitUpdate('effectTemplates:updated', effectTemplateService.getAllEffectTemplates());
     emitUpdate('grimorios:updated', grimorioService.listGrimorios());
     res.json({ success: true });
   } catch (e: any) { res.status(400).json({ error: e.message }); }

@@ -3,6 +3,9 @@ import QRCode from 'qrcode';
 import { Wifi, Copy, Check, AlertTriangle, RefreshCw, Smartphone } from 'lucide-react';
 import { api } from '../../services/api';
 import { AccessInfo, AccessLink } from '../../types';
+import { ONLINE } from '../../online/config';
+import { getRoom } from '../../online/session';
+import RoomInvite from '../../online/RoomInvite';
 
 // Por que este painel existe: o link que o mestre passava era o nome mDNS
 // (eva.local). Hotspot de celular, Wi-Fi de convidado e rede publica nao repassam
@@ -11,6 +14,27 @@ import { AccessInfo, AccessLink } from '../../types';
 // da maquina, em QR pra ninguem digitar errado, e o mDNS aparece so como opcao.
 
 export default function PlayerAccessPanel() {
+  return ONLINE ? <OnlineAccessPanel /> : <LanAccessPanel />;
+}
+
+// Modo online: nao ha rede local — o jogador entra pelo link/codigo da sala.
+function OnlineAccessPanel() {
+  const room = getRoom();
+  if (!room) return <p style={s.muted}>Nenhuma sala aberta.</p>;
+  return (
+    <div style={s.wrap}>
+      <div style={s.intro}>
+        <Wifi size={16} color="var(--accent)" />
+        <p style={s.introText}>
+          Mande o link (ou o código) para os jogadores. Funciona de qualquer rede — Wi-Fi, 4G, outra cidade.
+        </p>
+      </div>
+      <RoomInvite code={room.code} />
+    </div>
+  );
+}
+
+function LanAccessPanel() {
   const [info, setInfo] = useState<AccessInfo | null>(null);
   const [error, setError] = useState('');
   const [selected, setSelected] = useState<string>('');

@@ -400,14 +400,19 @@ export default function PlayerView() {
     const onRequestReviewed = (req: CharacterRequest) => {
       if (req.playerId === player.id) setReviewNotifs(prev => [...prev, req]);
     };
+    // Marca o jogador como online no painel do mestre (e de novo a cada reconexao).
+    const join = () => socket.emit('player:join', { playerId: player.id });
     socket.on('connect', onConnect);
+    socket.on('connect', join);
     socket.on('disconnect', onDisconnect);
     setConnected(socket.connected);
+    if (socket.connected) join();
     socket.on('character:updated', onCharUpdated);
     socket.on('character:removed', onCharRemoved);
     socket.on('request:reviewed', onRequestReviewed);
     return () => {
       socket.off('connect', onConnect);
+      socket.off('connect', join);
       socket.off('disconnect', onDisconnect);
       socket.off('character:updated', onCharUpdated);
       socket.off('character:removed', onCharRemoved);

@@ -17,7 +17,17 @@
     "noFallthroughCasesInSwitch": true,
     "baseUrl": ".",
     "paths": {
-      "@/*": ["src/*"]
+      "@/*": ["src/*"],
+      "better-sqlite3": ["src/online/shims/better-sqlite3.ts"],
+      "express": ["src/online/shims/express.ts"],
+      "crypto": ["src/online/shims/crypto.ts"],
+      "fs": ["src/online/shims/fs.ts"],
+      "path": ["src/online/shims/path.ts"],
+      "os": ["src/online/shims/os.ts"],
+      "http": ["src/online/shims/http.ts"],
+      "uuid": ["src/online/shims/uuid.ts"],
+      "socket.io": ["src/online/shims/socket.io.ts"],
+      "bonjour-service": ["src/online/shims/bonjour-service.ts"]
     }
   },
   "include": ["src"],
